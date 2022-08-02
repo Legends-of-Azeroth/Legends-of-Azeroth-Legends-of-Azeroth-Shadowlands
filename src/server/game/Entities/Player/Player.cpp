@@ -16500,10 +16500,19 @@ void Player::UpdateQuestObjectiveProgress(QuestObjectiveType objectiveType, int3
                     SetQuestObjectiveData(objective, newProgress);
                     if (addCount > 0 && !(objective.Flags & QUEST_OBJECTIVE_FLAG_HIDE_CREDIT_MSG))
                     {
-                        if (objectiveType != QUEST_OBJECTIVE_PLAYERKILLS)
-                            SendQuestUpdateAddCredit(quest, victimGuid, objective, newProgress);
-                        else
-                            SendQuestUpdateAddPlayer(quest, newProgress);
+                        switch (objectiveType)
+                        {
+                            case QUEST_OBJECTIVE_MONSTER:
+                            case QUEST_OBJECTIVE_GAMEOBJECT:
+                            case QUEST_OBJECTIVE_TALKTO:
+                                SendQuestUpdateAddCredit(quest, victimGuid, objective, newProgress);
+                                break;
+                            case QUEST_OBJECTIVE_PLAYERKILLS:
+                                SendQuestUpdateAddPlayer(quest, newProgress);
+                                break;
+                            default:
+                                break;
+                        }
                     }
 
                     objectiveIsNowComplete = IsQuestObjectiveComplete(logSlot, quest, objective);
