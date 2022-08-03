@@ -24,7 +24,6 @@
 
 class sceneTrigger_dh_init : public SceneTriggerScript
 
-{
 public:
     sceneTrigger_dh_init() : SceneTriggerScript("sceneTrigger_dh_init")
     {}
