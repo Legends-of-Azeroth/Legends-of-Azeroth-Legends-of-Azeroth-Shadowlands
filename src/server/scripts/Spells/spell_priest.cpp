@@ -21,20 +21,20 @@
  * Scriptnames of files in this file should be prefixed with "spell_pri_".
  */
 
+#include "ScriptMgr.h"
 #include "AreaTriggerAI.h"
+#include "G3DPosition.hpp"
 #include "GridNotifiers.h"
 #include "Log.h"
 #include "MoveSplineInitArgs.h"
 #include "ObjectAccessor.h"
 #include "PathGenerator.h"
 #include "Player.h"
-#include "ScriptMgr.h"
 #include "SpellAuraEffects.h"
 #include "SpellHistory.h"
 #include "SpellMgr.h"
 #include "SpellScript.h"
 #include "TaskScheduler.h"
-#include <G3D/Vector3.h>
 
 enum PriestSpells
 {
@@ -86,8 +86,7 @@ enum PriestSpells
     SPELL_PRIEST_SHADOW_MEND_PERIODIC_DUMMY         = 187464,
     SPELL_PRIEST_SHIELD_DISCIPLINE_ENERGIZE         = 47755,
     SPELL_PRIEST_SHIELD_DISCIPLINE_PASSIVE          = 197045,
-    SPELL_PRIEST_SIN_OF_THE_MANY                    = 280398,
-    SPELL_PRIEST_SIN_OF_THE_MANY_PASSIVE            = 280391,
+    SPELL_PRIEST_SINS_OF_THE_MANY                   = 280398,
     SPELL_PRIEST_SMITE                              = 585,
     SPELL_PRIEST_SPIRIT_OF_REDEMPTION               = 27827,
     SPELL_PRIEST_STRENGTH_OF_SOUL                   = 197535,
@@ -229,15 +228,11 @@ class spell_pri_atonement : public AuraScript
 {
     PrepareAuraScript(spell_pri_atonement);
 
-    bool Validate(SpellInfo const* /*spellInfo*/) override
+    bool Validate(SpellInfo const* spellInfo) override
     {
-        return ValidateSpellInfo
-        ({
-            SPELL_PRIEST_ATONEMENT_HEAL,
-            SPELL_PRIEST_SIN_OF_THE_MANY
-        })
-        && sSpellMgr->AssertSpellInfo(SPELL_PRIEST_ATONEMENT_HEAL, DIFFICULTY_NONE)->GetEffects().size() > EFFECT_1
-        && sSpellMgr->AssertSpellInfo(SPELL_PRIEST_SIN_OF_THE_MANY, DIFFICULTY_NONE)->GetEffects().size() > EFFECT_2;
+        return ValidateSpellInfo({ SPELL_PRIEST_ATONEMENT_HEAL, SPELL_PRIEST_SINS_OF_THE_MANY })
+            && spellInfo->GetEffects().size() > EFFECT_1
+            && sSpellMgr->AssertSpellInfo(SPELL_PRIEST_SINS_OF_THE_MANY, DIFFICULTY_NONE)->GetEffects().size() > EFFECT_2;
     }
 
     bool CheckProc(ProcEventInfo& eventInfo)
@@ -276,59 +271,23 @@ public:
     {
         _appliedAtonements.push_back(target);
 
-        if (Unit* caster = GetCaster())
-            if (caster->HasAura(SPELL_PRIEST_SIN_OF_THE_MANY))
-                HandleSinsOfTheMany(caster);
+        UpdateSinsOfTheManyValue();
     }
 
     void RemoveAtonementTarget(ObjectGuid const& target)
     {
         _appliedAtonements.erase(std::remove(_appliedAtonements.begin(), _appliedAtonements.end(), target), _appliedAtonements.end());
 
-        if (Unit* caster = GetCaster())
-            if (caster->HasAura(SPELL_PRIEST_SIN_OF_THE_MANY))
-                HandleSinsOfTheMany(caster);
+        UpdateSinsOfTheManyValue();
     }
 
-    void HandleSinsOfTheMany(Unit* caster)
+    void UpdateSinsOfTheManyValue()
     {
-        float damagePercent = 0.0f;
-
-        switch (_appliedAtonements.size())
-        {
-            case 0:
-            case 1:
-                damagePercent = 12.0f;
-                break;
-            case 2:
-                damagePercent = 10.0f;
-                break;
-            case 3:
-                damagePercent = 8.0f;
-                break;
-            case 4:
-                damagePercent = 7.0f;
-                break;
-            case 5:
-                damagePercent = 6.0f;
-                break;
-            case 7:
-            case 6:
-                damagePercent = 5.0f;
-                break;
-            case 9:
-            case 8:
-                damagePercent = 4.0f;
-                break;
-            case 10:
-            default:
-                damagePercent = 3.0f;
-                break;
-        }
+        constexpr std::array<float, 11> damageByStack = { 12.0f, 12.0f, 10.0f, 8.0f, 7.0f, 6.0f, 5.0f, 5.0f, 4.0f, 4.0f, 3.0f };
 
         for (SpellEffIndex effectIndex : { EFFECT_0, EFFECT_1, EFFECT_2 })
-            if (AuraEffect* sinOfTheMany = caster->GetAuraEffect(SPELL_PRIEST_SIN_OF_THE_MANY, effectIndex))
-                sinOfTheMany->ChangeAmount(damagePercent);
+            if (AuraEffect* sinOfTheMany = GetTarget()->GetAuraEffect(SPELL_PRIEST_SINS_OF_THE_MANY, effectIndex))
+                sinOfTheMany->ChangeAmount(damageByStack[std::min(_appliedAtonements.size(), damageByStack.size() - 1)]);
     }
 };
 
@@ -412,14 +371,10 @@ struct areatrigger_pri_divine_star : AreaTriggerAI
             PathGenerator firstPath(at);
             firstPath.CalculatePath(destPos.GetPositionX(), destPos.GetPositionY(), destPos.GetPositionZ(), false);
 
-            G3D::Vector3 endPoint = firstPath.GetPath().back();
-
-            Position pathEndPoint(endPoint.x, endPoint.y, endPoint.z);
-
-            Movement::PointsArray const& pointsFirstPath = firstPath.GetPath();
+            G3D::Vector3 const& endPoint = firstPath.GetPath().back();
 
             // Note: it takes 1000ms to reach 24 yards, so it takes 41.67ms to run 1 yard.
-            at->InitSplines(pointsFirstPath, at->GetDistance(pathEndPoint) * 41.67f);
+            at->InitSplines(firstPath.GetPath(), at->GetDistance(endPoint.x, endPoint.y, endPoint.z) * 41.67f);
         }
     }
 
@@ -479,30 +434,24 @@ struct areatrigger_pri_divine_star : AreaTriggerAI
 
     void ReturnToCaster()
     {
-        if (Unit* caster = at->GetCaster())
+        _scheduler.Schedule(0ms, [this](TaskContext task)
         {
-            _scheduler.Schedule(0ms, [this, caster](TaskContext task)
+            if (Unit* caster = at->GetCaster())
             {
                 _casterCurrentPosition = caster->GetPosition();
 
                 Movement::PointsArray returnSplinePoints;
 
-                // Note: we need to duplicate each point otherwise the spline is not formed.
-                for (uint8 i = 0; i < 4; i++)
-                {
-                    G3D::Vector3 returnPoint;
-                    returnPoint.x = (i < 2) ? at->GetPositionX() : caster->GetPositionX();
-                    returnPoint.y = (i < 2) ? at->GetPositionY() : caster->GetPositionY();
-                    returnPoint.z = (i < 2) ? at->GetPositionZ() : caster->GetPositionZ();
+                returnSplinePoints.push_back(PositionToVector3(at));
+                returnSplinePoints.push_back(PositionToVector3(at));
+                returnSplinePoints.push_back(PositionToVector3(caster));
+                returnSplinePoints.push_back(PositionToVector3(caster));
 
-                    returnSplinePoints.push_back(returnPoint);
-                }
-
-                at->InitSplines(returnSplinePoints, (at->GetDistance(caster) / 24) * 1000);
+                at->InitSplines(returnSplinePoints, at->GetDistance(caster) / 24 * 1000);
 
                 task.Repeat(250ms);
-            });
-        }
+            }
+        });
     }
 
 private:
@@ -803,64 +752,12 @@ class spell_pri_penance_channeled : public AuraScript
     void HandleOnRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
     {
         if (Unit* caster = GetCaster())
-        {
-            if (caster->HasAura(SPELL_PRIEST_POWER_OF_THE_DARK_SIDE))
-                caster->RemoveAura(SPELL_PRIEST_POWER_OF_THE_DARK_SIDE);
-        }
+            caster->RemoveAura(SPELL_PRIEST_POWER_OF_THE_DARK_SIDE);
     }
 
     void Register() override
     {
         OnEffectRemove += AuraEffectRemoveFn(spell_pri_penance_channeled::HandleOnRemove, EFFECT_0, SPELL_AURA_DUMMY, AURA_EFFECT_HANDLE_REAL);
-    }
-};
-
-// 47666 - Penance (Damage), 47750 - Penance (Healing)
-class spell_pri_penance_damage_healing: public SpellScript
-{
-    PrepareSpellScript(spell_pri_penance_damage_healing);
-
-    bool Validate(SpellInfo const* /*spellInfo*/) override
-    {
-        return ValidateSpellInfo({ SPELL_PRIEST_POWER_OF_THE_DARK_SIDE });
-    }
-
-    void HandleLaunchTarget(SpellEffIndex effIndex)
-    {
-        if (Unit* caster = GetCaster())
-        {
-            if (AuraEffect* powerOfTheDarkSide = caster->GetAuraEffect(SPELL_PRIEST_POWER_OF_THE_DARK_SIDE, EFFECT_0))
-            {
-                PreventHitDefaultEffect(effIndex);
-
-                uint32 value = 0;
-
-                if (GetSpellInfo()->Id == SPELL_PRIEST_PENANCE_DAMAGE)
-                {
-                    uint32 damageBonus = caster->SpellDamageBonusDone(GetHitUnit(), GetSpellInfo(), GetEffectValue(), SPELL_DIRECT_DAMAGE, GetEffectInfo(effIndex));
-                    value = damageBonus + uint32(damageBonus * GetEffectVariance());
-                    value *= 1.0f + (powerOfTheDarkSide->GetAmount() / 100.0f);
-                    value = GetHitUnit()->SpellDamageBonusTaken(caster, GetSpellInfo(), value, SPELL_DIRECT_DAMAGE);
-                    SetHitDamage(value);
-                }
-                else
-                {
-                    uint32 healingBonus = caster->SpellHealingBonusDone(GetHitUnit(), GetSpellInfo(), GetEffectValue(), HEAL, GetEffectInfo(effIndex));
-                    value = healingBonus + uint32(healingBonus * GetEffectVariance());
-                    value *= 1.0f + (powerOfTheDarkSide->GetAmount() / 100.0f);
-                    value = GetHitUnit()->SpellHealingBonusTaken(caster, GetSpellInfo(), value, HEAL);
-                    SetHitHeal(value);
-                }
-            }
-        }
-    }
-
-    void Register() override
-    {
-        if (m_scriptSpellId == SPELL_PRIEST_PENANCE_DAMAGE)
-            OnEffectLaunchTarget += SpellEffectFn(spell_pri_penance_damage_healing::HandleLaunchTarget, EFFECT_0, SPELL_EFFECT_SCHOOL_DAMAGE);
-        if (m_scriptSpellId == SPELL_PRIEST_PENANCE_HEALING)
-            OnEffectLaunchTarget += SpellEffectFn(spell_pri_penance_damage_healing::HandleLaunchTarget, EFFECT_0, SPELL_EFFECT_HEAL);
     }
 };
 
@@ -883,16 +780,73 @@ class spell_pri_power_of_the_dark_side : public AuraScript
     void HandleOnRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
     {
         if (Unit* caster = GetCaster())
-        {
-            if (caster->HasAura(SPELL_PRIEST_POWER_OF_THE_DARK_SIDE_TINT))
-                caster->RemoveAura(SPELL_PRIEST_POWER_OF_THE_DARK_SIDE_TINT);
-        }
+            caster->RemoveAura(SPELL_PRIEST_POWER_OF_THE_DARK_SIDE_TINT);
     }
 
     void Register() override
     {
         OnEffectApply += AuraEffectApplyFn(spell_pri_power_of_the_dark_side::HandleOnApply, EFFECT_0, SPELL_AURA_DUMMY, AURA_EFFECT_HANDLE_REAL);
         OnEffectRemove += AuraEffectRemoveFn(spell_pri_power_of_the_dark_side::HandleOnRemove, EFFECT_0, SPELL_AURA_DUMMY, AURA_EFFECT_HANDLE_REAL);
+    }
+};
+
+// 47666 - Penance (Damage)
+class spell_pri_power_of_the_dark_side_damage_bonus : public SpellScript
+{
+    PrepareSpellScript(spell_pri_power_of_the_dark_side_damage_bonus);
+
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_PRIEST_POWER_OF_THE_DARK_SIDE });
+    }
+
+    void HandleLaunchTarget(SpellEffIndex effIndex)
+    {
+        if (AuraEffect* powerOfTheDarkSide = GetCaster()->GetAuraEffect(SPELL_PRIEST_POWER_OF_THE_DARK_SIDE, EFFECT_0))
+        {
+            PreventHitDefaultEffect(effIndex);
+
+            float damageBonus = GetCaster()->SpellDamageBonusDone(GetHitUnit(), GetSpellInfo(), GetEffectValue(), SPELL_DIRECT_DAMAGE, GetEffectInfo());
+            float value = damageBonus + damageBonus * GetEffectVariance();
+            value *= 1.0f + (powerOfTheDarkSide->GetAmount() / 100.0f);
+            value = GetHitUnit()->SpellDamageBonusTaken(GetCaster(), GetSpellInfo(), value, SPELL_DIRECT_DAMAGE);
+            SetHitDamage(value);
+        }
+    }
+
+    void Register() override
+    {
+        OnEffectLaunchTarget += SpellEffectFn(spell_pri_power_of_the_dark_side_damage_bonus::HandleLaunchTarget, EFFECT_0, SPELL_EFFECT_SCHOOL_DAMAGE);
+    }
+};
+
+// 47750 - Penance (Healing)
+class spell_pri_power_of_the_dark_side_healing_bonus : public SpellScript
+{
+    PrepareSpellScript(spell_pri_power_of_the_dark_side_healing_bonus);
+
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_PRIEST_POWER_OF_THE_DARK_SIDE });
+    }
+
+    void HandleLaunchTarget(SpellEffIndex effIndex)
+    {
+        if (AuraEffect* powerOfTheDarkSide = GetCaster()->GetAuraEffect(SPELL_PRIEST_POWER_OF_THE_DARK_SIDE, EFFECT_0))
+        {
+            PreventHitDefaultEffect(effIndex);
+
+            float healingBonus = GetCaster()->SpellHealingBonusDone(GetHitUnit(), GetSpellInfo(), GetEffectValue(), HEAL, GetEffectInfo());
+            float value = healingBonus + healingBonus * GetEffectVariance();
+            value *= 1.0f + (powerOfTheDarkSide->GetAmount() / 100.0f);
+            value = GetHitUnit()->SpellHealingBonusTaken(GetCaster(), GetSpellInfo(), value, HEAL);
+            SetHitHeal(value);
+        }
+    }
+
+    void Register() override
+    {
+        OnEffectLaunchTarget += SpellEffectFn(spell_pri_power_of_the_dark_side_healing_bonus::HandleLaunchTarget, EFFECT_0, SPELL_EFFECT_HEAL);
     }
 };
 
@@ -1296,22 +1250,17 @@ class spell_pri_sins_of_the_many : public AuraScript
 
     bool Validate(SpellInfo const* /*spellInfo*/) override
     {
-        return ValidateSpellInfo({ SPELL_PRIEST_SIN_OF_THE_MANY });
+        return ValidateSpellInfo({ SPELL_PRIEST_SINS_OF_THE_MANY });
     }
 
     void HandleOnApply(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
     {
-        if (Unit* caster = GetCaster())
-            caster->CastSpell(caster, SPELL_PRIEST_SIN_OF_THE_MANY, true);
+        GetTarget()->CastSpell(GetTarget(), SPELL_PRIEST_SINS_OF_THE_MANY, true);
     }
 
     void HandleOnRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
     {
-        if (Unit* caster = GetCaster())
-        {
-            if (caster->HasAura(SPELL_PRIEST_SIN_OF_THE_MANY))
-                caster->RemoveAura(SPELL_PRIEST_SIN_OF_THE_MANY);
-        }
+        GetTarget()->RemoveAura(SPELL_PRIEST_SINS_OF_THE_MANY);
     }
 
     void Register() override
@@ -1670,8 +1619,9 @@ void AddSC_priest_spell_scripts()
     RegisterSpellScript(spell_pri_mind_bomb);
     RegisterSpellScript(spell_pri_penance);
     RegisterSpellScript(spell_pri_penance_channeled);
-    RegisterSpellScript(spell_pri_penance_damage_healing);
     RegisterSpellScript(spell_pri_power_of_the_dark_side);
+    RegisterSpellScript(spell_pri_power_of_the_dark_side_damage_bonus);
+    RegisterSpellScript(spell_pri_power_of_the_dark_side_healing_bonus);
     RegisterSpellScript(spell_pri_power_word_radiance);
     RegisterSpellAndAuraScriptPair(spell_pri_power_word_shield, spell_pri_power_word_shield_aura);
     RegisterSpellScript(spell_pri_power_word_solace);
