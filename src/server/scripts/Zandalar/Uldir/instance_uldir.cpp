@@ -46,7 +46,7 @@ struct instance_uldir : public InstanceScript
         {
             if (cInfo->MechanicImmuneMask == 0)
             {
-                if (instance->IsMythic())
+                if (instance->IsHeroic())
                     if (cre->GetFaction() == 16)
                         cre->SetBaseHealth(cre->GetMaxHealth() * 3.0f);
 
