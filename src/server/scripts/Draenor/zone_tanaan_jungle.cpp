@@ -29,23 +29,7 @@
 #include "Unit.h"
 #include "Vehicle.h"
 
-/// Fel Sludge - 188520
-class spell_tanaan_fel_sludge : public AuraScript
-{
-    PrepareAuraScript(spell_tanaan_fel_sludge);
 
-    void OnTick(AuraEffect const* aurEff)
-    {
-        if (Unit* target = GetTarget())
-            if (aurEff->GetBase()->GetStackAmount() >= 10)
-                target->Kill(target, true);
-    }
-
-    void Register() override
-    {
-        OnEffectPeriodic += AuraEffectPeriodicFn(spell_tanaan_fel_sludge::OnTick, EFFECT_2, SPELL_AURA_PERIODIC_DUMMY);
-    }
-};
 
 enum eMaps
 {
