@@ -2848,7 +2848,7 @@ struct boss_sylvanas_windrunner : public BossAI
                 }
                 else
                 {
-                    scheduler.Schedule(50ms, [this, pos, orientation, distance](TaskContext /*task*/)
+                    scheduler.Schedule(50ms, [this, pos, orientation, distance](TaskContext /*task*//*)
                     {
                         Position rightLine(pos.GetPositionX() + (std::cos(orientation - (M_PI / 2)) * 4.0f) + (std::cos(orientation) * distance), pos.GetPositionY() + (std::sin(orientation - (M_PI / 2)) * 4.0f) + (std::sin(orientation) * distance), pos.GetPositionZ());
 
