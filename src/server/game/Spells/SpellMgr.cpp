@@ -4656,6 +4656,15 @@ void SpellMgr::LoadSpellInfoCorrections()
         });
     });
 
+    // Veil of Darkness (Cast - Phase 3)
+    ApplySpellFix({ 354142 }, [](SpellInfo* spellInfo)
+    {
+        ApplySpellEffectFix(spellInfo, EFFECT_0, [](SpellEffectInfo* spellEffectInfo)
+        {
+            spellEffectInfo->TargetA = SpellImplicitTargetInfo(TARGET_UNIT_TARGET_ANY);
+        });
+    });
+
     // END OF SANCTUM OF DOMINATION
 
     // Summon Master Li Fei
